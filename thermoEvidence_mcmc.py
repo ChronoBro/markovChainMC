@@ -29,7 +29,7 @@ rcParams["text.usetex"] = True
 # MP: import emcee. The MPIPool routine is used for parallelization within
 # emcee; if you don't want to parallelize emcee's walkers, no need to import this
 import emcee
-from emcee import PTSampler
+#from emcee import PTSampler
 #from emcee.utils import MPIPool
 
 # if len(sys.argv) < 3:
@@ -94,7 +94,21 @@ with open(limitFileName,'r') as f:
 #print(thetaLimits)
 
 #for temperature I need this parameter GLOBAL, yeah I know there is probably a better way to do this...
-beta = 0
+beta = 0.0
+
+
+#apparently need function to change global variable... weird
+def changeBeta(value):
+    global beta
+    beta = value
+
+def getBeta():
+    global beta
+    return beta
+
+def printBeta():
+    global beta
+    print(beta)
 
 # MP: define the natural-log probability of the prior distribution. Given
 # "theta" which holds the prior distribution limits, this function returns 0 if
@@ -217,9 +231,14 @@ def lnprob(theta):
 
 def lnprobBeta(theta):
     lp = lnprior(theta)
+    #global beta
+    #print(getBeta())
+    #printBeta()
     if not np.isfinite(lp):
         return -np.inf
-    return lp + beta*lnlike(theta)
+    return lp + getBeta()*lnlike(theta)
+
+
 
 #found code for calculating the Bayes Factor for different dimension
 def integrate_posterior_3D(log_posterior, xlim, ylim, zlim, data=data):
@@ -243,8 +262,9 @@ def integrate_posterior_6D(log_posterior, xlim, ylim, zlim, data=data):
 #ndim = len(variedParams)
 
 ndim = len(theta)
-nwalkers = ndim*4
+#nwalkers = ndim*4
 
+nwalkers = ndim*8
 
 #the multiprocessing used below is compatable with Mac OS x
 #if you want to burn out your system
@@ -266,7 +286,8 @@ pool = mp.Pool(processes=6)
 #sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, pool=pool) 
 
 #sampler for thermo calculation
-sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprobBeta, pool=pool) 
+#sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprobBeta, pool = pool) 
+sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprobBeta) 
 
 
 #sampler=PTSampler(ntemps, nwalkers, ndim, lnprob, lnprior, pool=pool)
@@ -331,10 +352,10 @@ burnin_steps=0
 #nsteps = 100
 
 #more more testing
-nsteps = 200
+#nsteps = 200
 
 #rare
-#nsteps = 600
+nsteps = 600
 
 #medium rare
 #nsteps = 1200
@@ -355,20 +376,24 @@ likelihoodBeta = []
 Betas = []
 
 likelihood = []
-energies = []
+elikes = []
 
-ntemps = 10;
+ntemps = 8;
 maxT = 1.
 minT = 0.0001
-deltaBeta = np.log(maxT/minT)/float(ntemps);
+#minT = 0.5 #for testing
+deltaX = np.log(maxT/minT)/float(ntemps);
+deltaBeta = minT
 n = 0
 #following procedure outlined in Goggans & Chi (2004) doi: 10.1063/1.1751356
 
+
 while beta <= 1:
+
     sampler.reset() #to make sure that there isn't anything else in there before I start
     Betas.append(beta)
 
-    print("\nbeta: {0:0.6f}".format(beta))
+    print("\nbeta: {0:0.6f}".format(getBeta()))
 
 # MP: initialize parameters. The first command uniformly samples each parameter
 # within the limits defined in the prior. The second (commented) command samples
@@ -389,17 +414,24 @@ while beta <= 1:
     #p0 = [[variedParams[j] + np.random.normal(scale=0.05*variedParams[j]) for j in range(ndim)] for i in range(nwalkers)]
 
 
-    minwj = 1000.
+    minwj = 1E10
     maxwj = 0.
-    maxL = 0.
-    minL = 1000.
-    likelihood = []
-    energies = []
+    maxE = 0.
+    minE = 1E10
+    position = []
+    avgLpos = 0.
+    avgLPrior = 0.
+    avgElike = 0
 
     for i, result in enumerate(sampler.sample(p0,iterations=nsteps)):
-        position = result[0]
+        #position = result[0]
+        position = sampler.get_chain()[-1]
+        logprob = sampler.get_log_prob()[-1]
+        #print(result)
         #print(i)
         #print(position[i])
+        #print(position)
+        #print(logprob)
         try:
             position_output = open(outputStem+"/position.out", "a")
         except IOError:
@@ -407,40 +439,38 @@ while beta <= 1:
             
         sum = 0.
         
-        avgLpos = 0.
-        avgLPrior = 0.
-        avgE = 0
 
-        if(i > 100):#to not get burn in
+ #       if(i > 100):#to not get burn in
 
-            for k in range (position.shape[0]):
+#            for k in range (position.shape[0]):
                 #attempting to track the likelihood calculated for each walker, the running average should converge to the relative Bayes Factor (can directly use ratio if prior probabilities are equal)
                 
                 #should really generate model comparisons after the fact by looking at the walker positions
 
                 #using "temperature" method, before was using running average of likelihood, I'm not sure what's better or more correct
-                Lpos = np.exp(lnlike(position[k]))
-                avgLpos += Lpos/float(nwalkers)
+                #Lpos = np.exp(lnlike(position[k]))
+                #avgLpos += Lpos/float(nwalkers)
             
-                E = -lnlike(position[k])
-                avgE +=  E/float(nwalkers)
+                # Elike = -lnlike(position[k])
+                # avgElike +=  Elike/float(nwalkers)
 
-                #wj = np.exp(-beta*Lpos)
-                #walkerPos = [str(var) for var in position[k]]
-                #position_output.write("{}\n".format(" ".join(walkerPos).replace("\n",""))
-                # if(Lpos > maxL):
-                #     maxL = Lpos
-                # if(Lpos < minL):
-                #     minL = Lpos
+                # wj = np.exp(-deltaBeta*Elike)
+                # #print(wj)
+                # #walkerPos = [str(var) for var in position[k]]
+                # #position_output.write("{}\n".format(" ".join(walkerPos).replace("\n",""))
+                # if(Elike > maxE):
+                #     maxE = Elike
+                # if(Elike < minE):
+                #     minE = Elike
                 # if(wj > maxwj):
                 #     maxwj = wj
                 # if(wj < minwj):
                 #     minwj = wj
 
         
-                #avgLpos = avgLpos/nwalkers
-                likelihood.append(avgLpos)
-                energies.append(avgE)
+                # #avgLpos = avgLpos/nwalkers
+                # #likelihood.append(avgLpos)
+                # elikes.append(avgElike)
 
             #likelihoodPartialMean.append(np.mean(likelihood))
 
@@ -461,20 +491,63 @@ while beta <= 1:
             sys.stdout.write("\rSampling progress: {0:5.1%}".format(float(i+1) / nsteps))
             sys.stdout.flush()
 
-    #print(maxL)
-    #print(minL)
-    #print(maxwj)
-    #print(minwj)
-    likelihoodBeta.append(np.mean(likelihood))
+
+    for k in range(nwalkers):
+        #Elike = -sampler.get_log_prob(flat=True)[nwalkers*(nsteps-1)+k]
+        #Elike = -sampler.get_log_prob()[-1][k] #I can't take log_prob from chain because this has beta multiplied by it, I need actuall prob distribution
+        Elike = -lnlike(position[k])
+        #print(Elike)
+        #ElikeTest = -lnlike(sampler.get_chain(flat=True)[:,k])
+        #print(ElikeTest)
+        #Elike = -lnlike(position[k])
+        avgElike +=  Elike/float(nwalkers)
+        
+        wj = np.exp(-deltaBeta*Elike)
+        #print(wj)
+        #walkerPos = [str(var) for var in position[k]]
+        #position_output.write("{}\n".format(" ".join(walkerPos).replace("\n",""))
+        if(Elike > maxE):
+            maxE = Elike
+        if(Elike < minE):
+            minE = Elike
+        if(wj > maxwj):
+            maxwj = wj
+        if(wj < minwj):
+            minwj = wj
+                        
+        
+        #avgLpos = avgLpos/nwalkers
+        #likelihood.append(avgLpos)
+
+    elikes.append(avgElike)
+
+    # print("\n")
+    # print(maxE)
+    # print(minE)
+    # print(maxwj)
+    # print(minwj)
+
+    print("\n")
+    #likelihoodBeta.append(np.mean(likelihood))
     if(beta == 1): #just to make sure that it kicks out
         break
 
-    #deltaBeta = np.log(maxwj/minwj)/(maxL - minL)
+    
+    if(beta > 0):
+        deltaBeta = np.exp(np.log(minT)+float(n)*deltaX) - np.exp(np.log(minT)+float(n-1)*deltaX);
+
     #print(deltaBeta)
-    beta = np.exp(np.log(minT)+float(n)*deltaBeta);
+    #beta = np.exp(np.log(minT)+float(n)*deltaX);
+
+    changeBeta(beta + deltaBeta)
+    #print(getBeta())
+    #deltaBetaTest = np.log(maxwj/minwj)/(maxE - minE)
+    #print(deltaBetaTest)
+    #print(np.log(maxwj/minwj)/(maxE-minE))
     n = n + 1
     if(beta > 1): #just to make sure that I get the beta=1
         beta = 1
+
 
 # MP: This should be between 0.25 and 0.5, according to the emcee website.
 print("\n Mean acceptance fraction: {0:0.3f}\n"
@@ -483,11 +556,11 @@ print("\n Mean acceptance fraction: {0:0.3f}\n"
 # print("\n Likelihood from prior: {0:0.5f}\n"
 #       .format(np.mean(likelihoodPrior)))
 
-print("\n Likelihood of posterior:")# {0:0.5d}\n"
-print(np.mean(likelihood))
+#print("\n Likelihood of posterior:")# {0:0.5d}\n"
+#print(np.mean(likelihood))
 
-print(likelihoodBeta)
-print(energies)
+#print(likelihoodBeta)
+#print(elikes)
 #print("\n Bayes Factor from PTSampler:")# {0:.3f}"
 #       .format(sampler.thermodynamic_integration_log_evidence()[0]))
 
@@ -524,8 +597,8 @@ for i in range(ndim):
 
 
 pl.figure()
-pl.plot(likelihood,'bo')
-pl.savefig(outputStem+"/posteriorLikelihood")
+pl.plot(Betas, elikes,'bo')
+pl.savefig(outputStem+"/annealingLikelihood")
 
 # pl.figure()
 # pl.plot(likelihoodPriorPartialMean,'bo')
