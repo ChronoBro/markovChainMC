@@ -39,16 +39,10 @@ from emcee import PTSampler
 # nucleus = sys.argv[1]
 # outputStem = sys.argv[2]
 
-#outputStem = "outputs/doubletGroundState/logLikelihood"
+
 inputStem = "/home/hoff/markovChainMonteCarlo/markovChainMonteCarlo"
-#outputStem = "outputs/tripletGroundState"
-#outputStem = "outputs/tripletGroundState/reduceTest"
-#outputStem = "outputs/doubletGroundState/reduceTest"
-#outputStem = "outputs/doubletGroundState/gaussianPrior"
-#outputStem = "outputs/tripletGroundState/gaussianPrior"
-#outputStem = "outputs/tripletGroundState/gaussianPrior2"
 outputStem = "outputs/doubletGroundState/thermo"
-#outputStem = "outputs/doubletGroundState"
+#outputStem = "outputs/tripletGroundState/thermo"
 
 #read in tab delimited data file
 energies=[]
@@ -70,10 +64,6 @@ C = np.array(counts, dtype=float)
 
 data = zip(E,C)
 
-# MP: Setting up the "environment" I need to run my C++ code. In my case, this
-# reads in all the experimental data for O16, creates the lagrange basis, etc. 
-#pd.setupEnv(nucleus)
-
 # MP: Specifying where to find the prior distribution limits and my "best guess"
 # of the parameter values. In the example I showed at the DOM meeting, no "best
 # guess" was needed because I just randomly initialized the parameters within
@@ -81,10 +71,6 @@ data = zip(E,C)
 paramFileName = "parameters/current.inp"
 limitFileName = "parameters/prior.txt"
 
-# Read parameter data from file into parameter list
-#parameters = pd.ParameterData(paramFileName)
-#variedParams = parameters.get_params()
-#variedParamNames = parameters.get_names()
 
 theta = []
 thetaLimits = []
@@ -107,19 +93,8 @@ with open(limitFileName,'r') as f:
 #print(theta)
 #print(thetaLimits)
 
-# MP: reading in the prior limits from parameters/prior.txt
-# try:
-#     with open(limitFileName, 'r') as limitFile:
-#         for line in limitFile:
-#             tempLimits = line.split()
-#             if len(tempLimits)==0:
-#                 continue
-#             for paramName in variedParamNames:
-#                 if paramName==tempLimits[0]:
-#                     thetaLimits.append(tempLimits)
-
-# except IOError:
-#     print("Couldn't open " + limitFileName + ". ")
+#for temperature I need this parameter GLOBAL, yeah I know there is probably a better way to do this...
+beta = 0
 
 # MP: define the natural-log probability of the prior distribution. Given
 # "theta" which holds the prior distribution limits, this function returns 0 if
@@ -142,7 +117,7 @@ def lnprior(theta):
 # actually doesn't matter for our purposes because it scales all the chisq the
 # same, so it doesn't change the walker trajectory (I think...?).
 
-likelihood = []
+
 x1 = np.linspace(0.5,5000.5,5000)
 
 def lnlike(theta):
@@ -220,6 +195,8 @@ def lnlike(theta):
     for energy in E: #because of binning of x1, energy is mapped -0.5 from the entry
         chisq += np.log(y4[int(energy-0.5)]/normalize) #for likelihood analysis the the probability that a model is correct for n points is by comparing the model distribution, P, at points, p_n, and multiplying them all P(p_1)*P(p_2)*...*P(p_n). Thus when taking the log these can all be added together. This is the natural way to do these kind of fits, though time consuming.
 
+    #I'm appending the temperature parameter beta to the end of the 
+
     return chisq
     #return -(chisq/2.0) #good for traditional chisquared calculation where Likelihood = exp(-chisq/2.0)
 
@@ -237,6 +214,12 @@ def lnprob(theta):
         return -np.inf
     return lp + lnlike(theta)
 
+
+def lnprobBeta(theta):
+    lp = lnprior(theta)
+    if not np.isfinite(lp):
+        return -np.inf
+    return lp + beta*lnlike(theta)
 
 #found code for calculating the Bayes Factor for different dimension
 def integrate_posterior_3D(log_posterior, xlim, ylim, zlim, data=data):
@@ -261,7 +244,7 @@ def integrate_posterior_6D(log_posterior, xlim, ylim, zlim, data=data):
 
 ndim = len(theta)
 nwalkers = ndim*4
-ntemps = ndim*4
+
 
 #the multiprocessing used below is compatable with Mac OS x
 #if you want to burn out your system
@@ -280,7 +263,12 @@ pool = mp.Pool(processes=6)
 # MP: the first command below if for the parallelized version. If not
 # using parallelized emcee, use the second (commented) command
 
-sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, pool=pool) 
+#sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, pool=pool) 
+
+#sampler for thermo calculation
+sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprobBeta, pool=pool) 
+
+
 #sampler=PTSampler(ntemps, nwalkers, ndim, lnprob, lnprior, pool=pool)
 #sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob)
 
@@ -325,6 +313,8 @@ burnin_steps=0
 ##pos, prob, state = sampler.run_mcmc(p0, burnin_steps)
 #sampler.reset()
 
+#reset is the function I want for the termperature annealing
+
 # MP: This is where I actually take the samples and write out each walker's
 # position to "position.out" file after every step.
 
@@ -332,7 +322,16 @@ burnin_steps=0
 #nsteps = 10
 
 #testing
-nsteps = 50
+#nsteps = 50
+
+#testing 1
+#nsteps = 52
+
+#more testing
+#nsteps = 100
+
+#more more testing
+nsteps = 200
 
 #rare
 #nsteps = 600
@@ -352,6 +351,24 @@ nsteps = 50
 likelihoodPartialMean = []
 likelihoodPrior = []
 likelihoodPriorPartialMean = []
+likelihoodBeta = []
+Betas = []
+
+likelihood = []
+energies = []
+
+ntemps = 10;
+maxT = 1.
+minT = 0.0001
+deltaBeta = np.log(maxT/minT)/float(ntemps);
+n = 0
+#following procedure outlined in Goggans & Chi (2004) doi: 10.1063/1.1751356
+
+while beta <= 1:
+    sampler.reset() #to make sure that there isn't anything else in there before I start
+    Betas.append(beta)
+
+    print("\nbeta: {0:0.6f}".format(beta))
 
 # MP: initialize parameters. The first command uniformly samples each parameter
 # within the limits defined in the prior. The second (commented) command samples
@@ -359,62 +376,105 @@ likelihoodPriorPartialMean = []
 # parameter value, where I take the "best fit" from the DOM's powell method,
 # like Mack and I have been using.
 
-p0 = [[(float(limits[1])-float(limits[0]))*np.random.random_sample()+float(limits[0]) for limits in thetaLimits] for i in range(nwalkers)]
+#p0 = [[(float(limits[1])-float(limits[0]))*np.random.random_sample()+float(limits[0]) for limits in thetaLimits] for i in range(nwalkers)]
 
-#going to try gaussian priors
-#p0 = [[np.random.normal((float(limits[1])+float(limits[0]))/2.,(float(limits[1])-float(limits[0]))/7.) for limits in thetaLimits] for i in range(nwalkers)]
-
-#need extra set of walkers for each "temperature" in PTSampler
-#p0 = [[[np.random.normal((float(limits[1])+float(limits[0]))/2.,(float(limits[1])-float(limits[0]))/7.) for limits in thetaLimits] for i in range(nwalkers)]for k in range(ntemps)]
-
-#print(p0)
-#p0 = [[variedParams[j] + np.random.normal(scale=0.05*variedParams[j]) for j in range(ndim)] for i in range(nwalkers)]
+    #for thermo
+    p0 = [[(float(limits[1])-float(limits[0]))*np.random.random_sample()+float(limits[0]) for limits in thetaLimits] for i in range(nwalkers)]
 
 
-for i, result in enumerate(sampler.sample(p0,iterations=nsteps)):
-    position = result[0]
-    #print(position[i])
-    try:
-        position_output = open(outputStem+"/position.out", "a")
-    except IOError:
-        continue
+    #need extra set of walkers for each "temperature" in PTSampler
+    #p0 = [[[np.random.normal((float(limits[1])+float(limits[0]))/2.,(float(limits[1])-float(limits[0]))/7.) for limits in thetaLimits] for i in range(nwalkers)]for k in range(ntemps)]
 
-    sum = 0.
+    #print(p0)
+    #p0 = [[variedParams[j] + np.random.normal(scale=0.05*variedParams[j]) for j in range(ndim)] for i in range(nwalkers)]
 
-    avgLpos = 0.
-    avgLPrior = 0.
-    
-    for k in range (position.shape[0]):
-        #attempting to track the likelihood calculated for each walker, the running average should converge to the relative Bayes Factor (can directly use ratio if prior probabilities are equal)
 
-        #should really generate model comparisons after the fact by looking at the walker positions
+    minwj = 1000.
+    maxwj = 0.
+    maxL = 0.
+    minL = 1000.
+    likelihood = []
+    energies = []
 
-        #using "temperature" method, before was using running average of likelihood, I'm not sure what's better or more correct
-        #avgLpos += np.exp(lnlike(position[k]))
-          
-        walkerPos = [str(var) for var in position[k]]
-        position_output.write("{}\n".format(" ".join(walkerPos).replace("\n","")))
-
-    #avgLpos = avgLpos/nwalkers
-    #likelihood.append(avgLpos)
-    #likelihoodPartialMean.append(np.mean(likelihood))
-
-    #I'm going to sample the likelihood from the prior distribution to extract true Bayes factor
-    #p1 = [(float(limits[1])-float(limits[0]))*np.random.random_sample()+float(limits[0]) for limits in thetaLimits]
-    #gaussian priors
-    #p1 = [np.random.normal((float(limits[1])+float(limits[0]))/2.,(float(limits[1])-float(limits[0]))/7.) for limits in thetaLimits]
+    for i, result in enumerate(sampler.sample(p0,iterations=nsteps)):
+        position = result[0]
+        #print(i)
+        #print(position[i])
+        try:
+            position_output = open(outputStem+"/position.out", "a")
+        except IOError:
+            continue
+            
+        sum = 0.
         
-    #print(p1)
-    #likelihoodPrior.append(np.exp(lnlike(p1)))
-    #likelihoodPriorPartialMean.append(np.mean(likelihoodPrior))
+        avgLpos = 0.
+        avgLPrior = 0.
+        avgE = 0
+
+        if(i > 100):#to not get burn in
+
+            for k in range (position.shape[0]):
+                #attempting to track the likelihood calculated for each walker, the running average should converge to the relative Bayes Factor (can directly use ratio if prior probabilities are equal)
+                
+                #should really generate model comparisons after the fact by looking at the walker positions
+
+                #using "temperature" method, before was using running average of likelihood, I'm not sure what's better or more correct
+                Lpos = np.exp(lnlike(position[k]))
+                avgLpos += Lpos/float(nwalkers)
+            
+                E = -lnlike(position[k])
+                avgE +=  E/float(nwalkers)
+
+                #wj = np.exp(-beta*Lpos)
+                #walkerPos = [str(var) for var in position[k]]
+                #position_output.write("{}\n".format(" ".join(walkerPos).replace("\n",""))
+                # if(Lpos > maxL):
+                #     maxL = Lpos
+                # if(Lpos < minL):
+                #     minL = Lpos
+                # if(wj > maxwj):
+                #     maxwj = wj
+                # if(wj < minwj):
+                #     minwj = wj
+
+        
+                #avgLpos = avgLpos/nwalkers
+                likelihood.append(avgLpos)
+                energies.append(avgE)
+
+            #likelihoodPartialMean.append(np.mean(likelihood))
+
+            #I'm going to sample the likelihood from the prior distribution to extract true Bayes factor
+            #p1 = [(float(limits[1])-float(limits[0]))*np.random.random_sample()+float(limits[0]) for limits in thetaLimits]
+            #gaussian priors
+            #p1 = [np.random.normal((float(limits[1])+float(limits[0]))/2.,(float(limits[1])-float(limits[0]))/7.) for limits in thetaLimits]
+            
+            #print(p1)
+            #likelihoodPrior.append(np.exp(lnlike(p1)))
+            #likelihoodPriorPartialMean.append(np.mean(likelihoodPrior))
 
 
         
-    position_output.write("\n")
-    position_output.close()
-    if(i+1) % 1 == 0:
-        sys.stdout.write("\rSampling progress: {0:5.1%}".format(float(i+1) / nsteps))
-        sys.stdout.flush()
+            #position_output.write("\n")
+            #position_output.close()
+        if(i+1) % 1 == 0:
+            sys.stdout.write("\rSampling progress: {0:5.1%}".format(float(i+1) / nsteps))
+            sys.stdout.flush()
+
+    #print(maxL)
+    #print(minL)
+    #print(maxwj)
+    #print(minwj)
+    likelihoodBeta.append(np.mean(likelihood))
+    if(beta == 1): #just to make sure that it kicks out
+        break
+
+    #deltaBeta = np.log(maxwj/minwj)/(maxL - minL)
+    #print(deltaBeta)
+    beta = np.exp(np.log(minT)+float(n)*deltaBeta);
+    n = n + 1
+    if(beta > 1): #just to make sure that I get the beta=1
+        beta = 1
 
 # MP: This should be between 0.25 and 0.5, according to the emcee website.
 print("\n Mean acceptance fraction: {0:0.3f}\n"
@@ -423,6 +483,11 @@ print("\n Mean acceptance fraction: {0:0.3f}\n"
 # print("\n Likelihood from prior: {0:0.5f}\n"
 #       .format(np.mean(likelihoodPrior)))
 
+print("\n Likelihood of posterior:")# {0:0.5d}\n"
+print(np.mean(likelihood))
+
+print(likelihoodBeta)
+print(energies)
 #print("\n Bayes Factor from PTSampler:")# {0:.3f}"
 #       .format(sampler.thermodynamic_integration_log_evidence()[0]))
 
@@ -457,30 +522,10 @@ for i in range(ndim):
         writer = csv.writer(f2,delimiter='\t')
         writer.writerows(zip(bins, probDensities))
 
-#    newValues = []
-#    for value, bin in zip(probDensities,bins):
-#        newValues.append(probDensities*lnlike(bins))
-                         
-#    print(np.trapz(newValues))
 
-       
-   #this fails
-   #a = np.hstack((bins,probDensities))
-   #b = np.asarray(a)
-   #np.savetxt(outputStem+"/probDensity"+str(i)+".txt", b, delimiter=" ")
-   
-#   for bin,value in zip(bins,probDensities):
-#       probDensitiesOut = open(outputStem+"/probDensity"+str(i)+".txt","w+")
-#       probDensitiesOut.write(str(bin))
-#       probDensitiesOut.write("\t")
-#       probDensitiesOut.write(str(value))
-#       probDensitiesOut.write("\n")
-       #print(bin)
-    #probDensitiesOut.close()
-
-# pl.figure()
-# pl.plot(likelihood,'bo')
-# pl.savefig(outputStem+"/posteriorLikelihood")
+pl.figure()
+pl.plot(likelihood,'bo')
+pl.savefig(outputStem+"/posteriorLikelihood")
 
 # pl.figure()
 # pl.plot(likelihoodPriorPartialMean,'bo')
